@@ -2,14 +2,20 @@
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import glob
 
-def preprocess_data(dataframe):
+def preprocess_data(filepath):
     '''
     Completes preprocessing specific to the LCA dataset.
+
+    Input:
+      - filepath (string): folder where all CSVs are located
+    Returns:
+      - pickled dataframe in the same location
     '''
     print(1, datetime.now().strftime("%H:%M:%S"))
 
-    df = dataframe.copy()
+    # df = dataframe.copy()
     year_mismatches = {'H1B_DEPENDENT': 'H-1B_DEPENDENT',
                        'EMPLOYMENT_START_DATE': 'PERIOD_OF_EMPLOYMENT_END_DATE',
                        'EMPLOYMENT_END_DATE': 'PERIOD_OF_EMPLOYMENT_START_DATE',
@@ -36,15 +42,29 @@ def preprocess_data(dataframe):
                             'CHANGE_PREVIOUS_EMPLOYMENT': 'boolean',
                             'NEW_CONCURRENT_EMPLOYMENT': 'boolean',
                             'CHANGE_EMPLOYER': 'boolean',
-                            'AMENDED_PETITION': 'boolean'}
+                            'AMENDED_PETITION': 'boolean',
+                            'YEAR': 'category'}
     print(2, datetime.now().strftime("%H:%M:%S"))
 
-    # rename columns with naming discrepancies across years
-    df = df.rename(columns=year_mismatches)
-    print(3, datetime.now().strftime("%H:%M:%S"))
+    df = pd.DataFrame()
+    for year in glob.glob(filepath + '/*.csv'):
+        print(year)
+        data_for_year = pd.read_csv(year, low_memory=False)
+        print(3.1, datetime.now().strftime("%H:%M:%S"))
+
+        # rename columns with naming discrepancies across years
+        data_for_year = data_for_year.rename(columns=year_mismatches)
+        data_for_year['YEAR'] = year[-8:-4]
+        print(3.2, datetime.now().strftime("%H:%M:%S"))
+
+        df = df.append(data_for_year, ignore_index=True)
+        print(3.3, datetime.now().strftime("%H:%M:%S"))
 
     # Remove applications for speciality visas for Australia, Chile, & Singapore
     df = df[df['VISA_CLASS'] == 'H-1B']
+
+    # Remove applications that were withdrawn
+    df = df[df['CASE_STATUS'] != 'WITHDRAWN']
     print(4, datetime.now().strftime("%H:%M:%S"))
 
     # Drop any columns not identified for analysis
