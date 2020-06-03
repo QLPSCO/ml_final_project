@@ -30,7 +30,7 @@ def preprocess_data(filepath):
                             'FULL_TIME_POSITION': 'boolean',
                             'PERIOD_OF_EMPLOYMENT_START_DATE': 'datetime64',
                             'PERIOD_OF_EMPLOYMENT_END_DATE': 'datetime64',
-                            #'EMPLOYER_NAME': 'category', # previous year's result
+                            'EMPLOYER_NAME': 'category', # previous year's result
                             'EMPLOYER_STATE': 'category',
                             'NAICS_CODE': 'category',
                             'AGENT_REPRESENTING_EMPLOYER': 'boolean',
@@ -77,6 +77,10 @@ def preprocess_data(filepath):
     df = df.filter(list(columns_for_analysis.keys()))
     print(5, datetime.now().strftime("%H:%M:%S"))
 
+    # Count of missing or invalid fields
+    df['NUMBER_INVALID_FIELDS'] = df.isnull().sum(axis=1)
+    print(14, datetime.now().strftime("%H:%M:%S"))
+
     # remove leading/trailing whitespace from text fields
     for col in df:
         if df[col].dtype == 'object':
@@ -117,22 +121,28 @@ def preprocess_data(filepath):
     regex = '^\D+$'
     df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'] = 'Not specified'
     df['SOC_CODE'] = df['SOC_CODE'].fillna('Not specified')
+    print(8.1, datetime.now().strftime("%H:%M:%S"))
 
     # Condense NAICS code to be four-digit level
     df['NAICS_CODE'] = df.NAICS_CODE.astype(str).str[:4]
+    df['NAICS_CODE'] = df['NAICS_CODE'].fillna('Not specified')
+    print(8.2, datetime.now().strftime("%H:%M:%S"))
 
     # Convert employment status subcats to be proportions rather than raws
     applicant_count = pd.Series(0, index=np.arange(len(df)))
     for col in [k for k, v in columns_for_analysis.items() if v == 'ratio']:
         df[col] = pd.to_numeric(df[col], errors='coerce').astype(float)
+        print(sum(df[col].fillna(0)))
         applicant_count += df[col].fillna(0)
 
     for col in [k for k, v in columns_for_analysis.items() if v == 'ratio']:
-        df[col] = df[col].fillna(-1) / applicant_count
-        if min(df[col]) < 0:
+        df[col] = (df[col].fillna(-1) / applicant_count)
+        if df[col].min() < 0.0:
+            print(col, 'in here')
             df.loc[df[col] < 0, col] = df[col][df[col] >= 0].median()
-        df[col] = df[col][np.isinf(df[col])] = 0 # for nonzero / 0
+        df[col][np.isinf(df[col])] = 0 # for nonzero / 0
         df[col] = df[col].fillna(0) # for 0 / 0
+    print(8.3, datetime.now().strftime("%H:%M:%S"))
 
     # recode Boolean to be 0/1/NAN
     for col in [k for k, v in columns_for_analysis.items() if v == 'boolean']:
@@ -160,21 +170,21 @@ def preprocess_data(filepath):
                           'PERIOD_OF_EMPLOYMENT_END_DATE'])
     print(12, datetime.now().strftime("%H:%M:%S"))
 
-    # Number of applications submitted by company
-    employer_count = pd.DataFrame(df['EMPLOYER_NAME'].value_counts()) # break out by year!
-    employer_count = employer_count.rename(columns={'EMPLOYER_NAME': 'TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'})
-    df = df.merge(employer_count,
-            left_on='EMPLOYER_NAME',
-            right_index=True,
-            validate='m:1')
-    print(13, datetime.now().strftime("%H:%M:%S"))
 
-    # Count of missing or invalid fields
-    df['NUMBER_INVALID_FIELDS'] = df.isnull().sum(axis=1)
-    print(14, datetime.now().strftime("%H:%M:%S"))
+    # Number of applications submitted by company
+    employer_count = pd.DataFrame(df.groupby(['EMPLOYER_NAME', 'YEAR']).size()).rename(columns={0: 'TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'})
+    df = df.merge(employer_count,
+                  left_on=['EMPLOYER_NAME', 'YEAR'],
+                  right_index=True,
+                  how='left',
+                  validate='m:1')
+    df['TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'] = df['TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'].fillna(1)
+    df = df.drop(columns='EMPLOYER_NAME')
+    print(13, datetime.now().strftime("%H:%M:%S"))
 
     # FINISHED PREPROCESSING
     return df
+
 
 def undersample(dataframe):
     df = dataframe.copy()
