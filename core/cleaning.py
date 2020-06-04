@@ -33,10 +33,11 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
                             'PERIOD_OF_EMPLOYMENT_END_DATE': 'datetime64',
                             'EMPLOYER_NAME': 'category',
                             'EMPLOYER_STATE': 'category',
-                            'NAICS_CODE': 'category',
+                            # 'NAICS_CODE': 'category',
                             'AGENT_REPRESENTING_EMPLOYER': 'boolean',
                             'TOTAL_WORKER_POSITIONS': 'int',
                             'WAGE_RATE_OF_PAY_FROM_1': 'float',
+                            'WAGE_UNIT_OF_PAY_1': 'category',
                             'H-1B_DEPENDENT': 'boolean',
                             'WILLFUL_VIOLATOR': 'boolean',
                             'NEW_EMPLOYMENT': 'ratio',
@@ -49,9 +50,10 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
     print(2, datetime.now().strftime("%H:%M:%S"))
 
     df = pd.DataFrame()
-    for year in glob.glob(filepath + '/*.csv'):
+    for year in glob.glob(filepath + '/*.pkl'): #'/*.csv'):
         print(year)
-        data_for_year = pd.read_csv(year, low_memory=False, nrows=nrows, skiprows=skiprows)
+        # data_for_year = pd.read_csv(year, low_memory=False, nrows=nrows, skiprows=skiprows)
+        data_for_year = pd.read_pickle(year)
         print(3.1, datetime.now().strftime("%H:%M:%S"))
 
         # rename columns with naming discrepancies across years
@@ -68,40 +70,52 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
 
     # Remove applications that were withdrawn
     df = df[df['CASE_STATUS'] != 'WITHDRAWN'].reset_index()
-    print(4.2, datetime.now().strftime("%H:%M:%S"))
+    print(5, datetime.now().strftime("%H:%M:%S"))
+
+
 
     # Reclassify applications that were withdrawn after being certified as simply certified
     df.loc[df['CASE_STATUS'] == 'CERTIFIED-WITHDRAWN', 'CASE_STATUS'] = 'CERTIFIED'
-    print(4.5, datetime.now().strftime("%H:%M:%S"))
+    print(6, datetime.now().strftime("%H:%M:%S"))
 
     # Drop any columns not identified for analysis
     df = df.filter(list(columns_for_analysis.keys()))
-    print(5, datetime.now().strftime("%H:%M:%S"))
+    print(7, datetime.now().strftime("%H:%M:%S"))
 
     # Count of missing or invalid fields
     df['NUMBER_INVALID_FIELDS'] = df.isnull().sum(axis=1)
-    print(14, datetime.now().strftime("%H:%M:%S"))
+    print(8, datetime.now().strftime("%H:%M:%S"))
 
     # remove leading/trailing whitespace from text fields
     for col in df:
         if df[col].dtype == 'object':
             df[col] = df[col].str.strip()
-    print(6, datetime.now().strftime("%H:%M:%S"))
+    print(9, datetime.now().strftime("%H:%M:%S"))
 
     # convert date columns to datetime; retain only date, drop the time
-    for col in [k for k, v in columns_for_analysis.items() if v == 'datetime64']:
-        df[col] = pd.to_datetime(df[col]).dt.date
-    print(7, datetime.now().strftime("%H:%M:%S"))
+    # for col in [k for k, v in columns_for_analysis.items() if v == 'datetime64']:
+    #     df[col] = pd.to_datetime(df[col]).dt.date
+    # print(10, datetime.now().strftime("%H:%M:%S"))
 
     # remove punctuation from wage column
     df['WAGE_RATE_OF_PAY_FROM_1'] = (df['WAGE_RATE_OF_PAY_FROM_1']
                                     .str.replace(',|\$', '').astype('float'))
-    print(8, datetime.now().strftime("%H:%M:%S"))
+    print(11, datetime.now().strftime("%H:%M:%S"))
+    df['WAGE_RATE_OF_PAY_FROM_1'] = df['WAGE_RATE_OF_PAY_FROM_1'].fillna('Year')
+
+    wage_multiplier = {'Year': 1,
+                       'Hour': 2080,
+                       'Month': 12,
+                       'Week': 52,
+                       'Bi-Weekly': 26}
+
+    df['WAGE_RATE_OF_PAY_FROM_1'] = (df['WAGE_RATE_OF_PAY_FROM_1']
+                                     * df['WAGE_UNIT_OF_PAY_1'].map(wage_multiplier))
 
     # Clean up the SOCS code
-    regex = '\d\d-\d\d\d\d\.\d\d'
-    df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'] = \
-    df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'].str[:7]
+    # regex = '\d\d-\d\d\d\d\.\d\d'
+    # df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'] = \
+    # df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'].str[:7]
 
     november_fixer = {'Nov-11': '11-2011',
                       'Nov-21': '11-3021',
@@ -118,16 +132,16 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
                       'Nov-81': '11-9081',
                       'Nov-99': '11-9199'}
     df['SOC_CODE'] = df['SOC_CODE'].replace(november_fixer)
+    df['SOC_CODE'] = df['SOC_CODE'].astype(str).str[:2]
 
     regex = '^\D+$'
-    df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'] = 'Not specified'
-    df['SOC_CODE'] = df['SOC_CODE'].fillna('Not specified')
-    print(8.1, datetime.now().strftime("%H:%M:%S"))
+    df.loc[df['SOC_CODE'].str.contains(regex).fillna(False), 'SOC_CODE'] = np.nan
+    print(12, datetime.now().strftime("%H:%M:%S"))
 
     # Condense NAICS code to be four-digit level
-    df['NAICS_CODE'] = df['NAICS_CODE'].astype(str).str[:4]
-    df['NAICS_CODE'] = df['NAICS_CODE'].fillna('Not specified')
-    print(8.2, datetime.now().strftime("%H:%M:%S"))
+    # df['NAICS_CODE'] = df['NAICS_CODE'].astype(str).str[:2]
+    # df['NAICS_CODE'][df['NAICS_CODE'] == 'na'] = np.nan
+    # print(13, datetime.now().strftime("%H:%M:%S"))
 
     # Convert employment status subcats to be proportions rather than raws
     applicant_count = pd.Series(0, index=np.arange(len(df)))
@@ -139,11 +153,10 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
     for col in [k for k, v in columns_for_analysis.items() if v == 'ratio']:
         df[col] = (df[col].fillna(-1) / applicant_count)
         if df[col].min() < 0.0:
-            print(col, 'in here')
             df.loc[df[col] < 0, col] = df[col][df[col] >= 0].median()
         df[col][np.isinf(df[col])] = 0 # for nonzero / 0
         df[col] = df[col].fillna(0) # for 0 / 0
-    print(8.3, datetime.now().strftime("%H:%M:%S"))
+    print(14, datetime.now().strftime("%H:%M:%S"))
 
     # recode Boolean to be 0/1, and replace NaN's weighted randomly
     for col in [k for k, v in columns_for_analysis.items() if v == 'boolean']:
@@ -153,7 +166,7 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
             val = val[~pd.isnull(val)]
             val = np.random.choice(val, size=len(df[col][df[col].isna()]))
             df[col].update(pd.Series(val, index=df[col][df[col].isna()].index))
-    print(9, datetime.now().strftime("%H:%M:%S"))
+    print(15, datetime.now().strftime("%H:%M:%S"))
 
     # replace categorical NaN's weighted randomly
     for col in [k for k, v in columns_for_analysis.items() if v == 'category']:
@@ -162,27 +175,28 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
             val = val[~pd.isnull(val)]
             val = np.random.choice(val, size=len(df[col][df[col].isna()]))
             df[col].update(pd.Series(val, index=df[col][df[col].isna()].index))
-    print(9.1, datetime.now().strftime("%H:%M:%S"))
+    print(16, datetime.now().strftime("%H:%M:%S"))
 
     # replace NaN's for numerical columns with median values
     for col in [k for k, v in columns_for_analysis.items() if v == 'int' or v == 'float']:
         median = df[col].median()
         df.loc[df[col].isna(), col] = median
-    print(11, datetime.now().strftime("%H:%M:%S"))
+    print(17, datetime.now().strftime("%H:%M:%S"))
 
     # NEW FEATURE GENERATION
     # number of days before start date the application was submitted
-    df['CASE_SUBMITTED'] = (df['PERIOD_OF_EMPLOYMENT_START_DATE'] - df['CASE_SUBMITTED']).dt.days
-    df.loc[df['CASE_SUBMITTED'].isna(), 'CASE_SUBMITTED'] = df['CASE_SUBMITTED'].median()
+    # df['CASE_SUBMITTED'] = (df['PERIOD_OF_EMPLOYMENT_START_DATE'] - df['CASE_SUBMITTED']).dt.days
+    # df.loc[df['CASE_SUBMITTED'].isna(), 'CASE_SUBMITTED'] = df['CASE_SUBMITTED'].median()
+    # print(18, datetime.now().strftime("%H:%M:%S"))
 
     # Duration of employment
-    df['EMPLOYMENT_LENGTH'] = ((df['PERIOD_OF_EMPLOYMENT_END_DATE']
-                                - df['PERIOD_OF_EMPLOYMENT_START_DATE'])
-                                / np.timedelta64(1,'D'))
-    df = df.drop(columns=['PERIOD_OF_EMPLOYMENT_START_DATE',
-                          'PERIOD_OF_EMPLOYMENT_END_DATE'])
-    df.loc[df['EMPLOYMENT_LENGTH'].isna(), 'EMPLOYMENT_LENGTH'] = df['EMPLOYMENT_LENGTH'].median()
-    print(12, datetime.now().strftime("%H:%M:%S"))
+    # df['EMPLOYMENT_LENGTH'] = ((df['PERIOD_OF_EMPLOYMENT_END_DATE']
+    #                             - df['PERIOD_OF_EMPLOYMENT_START_DATE'])
+    #                             / np.timedelta64(1,'D'))
+    # df = df.drop(columns=['PERIOD_OF_EMPLOYMENT_START_DATE',
+    #                       'PERIOD_OF_EMPLOYMENT_END_DATE'])
+    # df.loc[df['EMPLOYMENT_LENGTH'].isna(), 'EMPLOYMENT_LENGTH'] = df['EMPLOYMENT_LENGTH'].median()
+    # print(19, datetime.now().strftime("%H:%M:%S"))
 
     # Number of applications submitted by company
     employer_count = pd.DataFrame(df.groupby(['EMPLOYER_NAME', 'YEAR']).size()).rename(columns={0: 'TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'})
@@ -193,7 +207,10 @@ def preprocess_data(filepath, nrows=None, skiprows=None):
                   validate='m:1')
     df['TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'] = df['TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'].fillna(1)
     df = df.drop(columns='EMPLOYER_NAME')
-    print(13, datetime.now().strftime("%H:%M:%S"))
+    print(20, datetime.now().strftime("%H:%M:%S"))
+
+    # Remove applications where the company submitted 2 or fewer applications
+    df = df[df["TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER"] > 3]
 
     # FINISHED PREPROCESSING
     return df
