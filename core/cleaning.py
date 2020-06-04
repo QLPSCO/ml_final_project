@@ -3,9 +3,10 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 import glob
+import random
 from imblearn.under_sampling import RandomUnderSampler
 
-def preprocess_data(filepath):
+def preprocess_data(filepath, nrows=None, skiprows=None):
     '''
     Completes preprocessing specific to the LCA dataset.
 
@@ -18,8 +19,8 @@ def preprocess_data(filepath):
 
     # df = dataframe.copy()
     year_mismatches = {'H1B_DEPENDENT': 'H-1B_DEPENDENT',
-                       'EMPLOYMENT_START_DATE': 'PERIOD_OF_EMPLOYMENT_END_DATE',
-                       'EMPLOYMENT_END_DATE': 'PERIOD_OF_EMPLOYMENT_START_DATE',
+                       'EMPLOYMENT_START_DATE': 'PERIOD_OF_EMPLOYMENT_START_DATE',
+                       'EMPLOYMENT_END_DATE': 'PERIOD_OF_EMPLOYMENT_END_DATE',
                        'WAGE_RATE_OF_PAY_FROM': 'WAGE_RATE_OF_PAY_FROM_1',
                        'TOTAL_WORKERS': 'TOTAL_WORKER_POSITIONS',
                        'NEW_CONCURRENT_EMP': 'NEW_CONCURRENT_EMPLOYMENT'}
@@ -30,7 +31,7 @@ def preprocess_data(filepath):
                             'FULL_TIME_POSITION': 'boolean',
                             'PERIOD_OF_EMPLOYMENT_START_DATE': 'datetime64',
                             'PERIOD_OF_EMPLOYMENT_END_DATE': 'datetime64',
-                            'EMPLOYER_NAME': 'category', # previous year's result
+                            'EMPLOYER_NAME': 'category',
                             'EMPLOYER_STATE': 'category',
                             'NAICS_CODE': 'category',
                             'AGENT_REPRESENTING_EMPLOYER': 'boolean',
@@ -50,7 +51,7 @@ def preprocess_data(filepath):
     df = pd.DataFrame()
     for year in glob.glob(filepath + '/*.csv'):
         print(year)
-        data_for_year = pd.read_csv(year, low_memory=False)
+        data_for_year = pd.read_csv(year, low_memory=False, nrows=nrows, skiprows=skiprows)
         print(3.1, datetime.now().strftime("%H:%M:%S"))
 
         # rename columns with naming discrepancies across years
@@ -124,7 +125,7 @@ def preprocess_data(filepath):
     print(8.1, datetime.now().strftime("%H:%M:%S"))
 
     # Condense NAICS code to be four-digit level
-    df['NAICS_CODE'] = df.NAICS_CODE.astype(str).str[:4]
+    df['NAICS_CODE'] = df['NAICS_CODE'].astype(str).str[:4]
     df['NAICS_CODE'] = df['NAICS_CODE'].fillna('Not specified')
     print(8.2, datetime.now().strftime("%H:%M:%S"))
 
@@ -144,16 +145,24 @@ def preprocess_data(filepath):
         df[col] = df[col].fillna(0) # for 0 / 0
     print(8.3, datetime.now().strftime("%H:%M:%S"))
 
-    # recode Boolean to be 0/1/NAN
+    # recode Boolean to be 0/1, and replace NaN's weighted randomly
     for col in [k for k, v in columns_for_analysis.items() if v == 'boolean']:
         df[col] = df[col].map({'Y': 1, 'N': 0, 1: 1, 0: 0, '1': 1, '0': 0})
+        if len(df[col][df[col].isna()]) > 0:
+            val = np.ravel(df[col].values)
+            val = val[~pd.isnull(val)]
+            val = np.random.choice(val, size=len(df[col][df[col].isna()]))
+            df[col].update(pd.Series(val, index=df[col][df[col].isna()].index))
     print(9, datetime.now().strftime("%H:%M:%S"))
 
-    # some columns make sense to have NaNs be recoded as 0, so do that
-    nas_to_0_vars = ['H-1B_DEPENDENT', 'WILLFUL_VIOLATOR']
-    for col in nas_to_0_vars:
-        df.loc[df[col].isna(), col] = 0
-    print(10, datetime.now().strftime("%H:%M:%S"))
+    # replace categorical NaN's weighted randomly
+    for col in [k for k, v in columns_for_analysis.items() if v == 'category']:
+        if len(df[col][df[col].isna()]) > 0:
+            val = np.ravel(df[col].values)
+            val = val[~pd.isnull(val)]
+            val = np.random.choice(val, size=len(df[col][df[col].isna()]))
+            df[col].update(pd.Series(val, index=df[col][df[col].isna()].index))
+    print(9.1, datetime.now().strftime("%H:%M:%S"))
 
     # replace NaN's for numerical columns with median values
     for col in [k for k, v in columns_for_analysis.items() if v == 'int' or v == 'float']:
@@ -162,14 +171,18 @@ def preprocess_data(filepath):
     print(11, datetime.now().strftime("%H:%M:%S"))
 
     # NEW FEATURE GENERATION
+    # number of days before start date the application was submitted
+    df['CASE_SUBMITTED'] = (df['PERIOD_OF_EMPLOYMENT_START_DATE'] - df['CASE_SUBMITTED']).dt.days
+    df.loc[df['CASE_SUBMITTED'].isna(), 'CASE_SUBMITTED'] = df['CASE_SUBMITTED'].median()
+
     # Duration of employment
-    df['EMPLOYMENT_LENGTH'] = ((df['PERIOD_OF_EMPLOYMENT_START_DATE']
-                                - df['PERIOD_OF_EMPLOYMENT_END_DATE'])
+    df['EMPLOYMENT_LENGTH'] = ((df['PERIOD_OF_EMPLOYMENT_END_DATE']
+                                - df['PERIOD_OF_EMPLOYMENT_START_DATE'])
                                 / np.timedelta64(1,'D'))
     df = df.drop(columns=['PERIOD_OF_EMPLOYMENT_START_DATE',
                           'PERIOD_OF_EMPLOYMENT_END_DATE'])
+    df.loc[df['EMPLOYMENT_LENGTH'].isna(), 'EMPLOYMENT_LENGTH'] = df['EMPLOYMENT_LENGTH'].median()
     print(12, datetime.now().strftime("%H:%M:%S"))
-
 
     # Number of applications submitted by company
     employer_count = pd.DataFrame(df.groupby(['EMPLOYER_NAME', 'YEAR']).size()).rename(columns={0: 'TOTAL_ANNUAL_APPLICATIONS_BY_EMPLOYER'})
